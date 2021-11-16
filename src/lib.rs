@@ -75,12 +75,12 @@ fn readdir_<F: FnMut(&str)>(
 
     // Prepare the query
     let mut stmt = connection
-        .prepare("select key, mode from meta_data where key glob ?1;")
+        .prepare("select key, mode from meta_data where key glob ?1 and mode != 0 and key != '/' and key != ?2;")
         .context(EAcess)?;
 
     // Actually do the query
-    let key_mode_iter = stmt
-        .query_map(params![glob], |row| {
+    let mut key_mode_iter = stmt
+        .query_map(params![glob, path], |row| {
             Ok(KeyMode {
                 key: row.get(0)?,
                 mode: row.get(1)?,
@@ -88,25 +88,12 @@ fn readdir_<F: FnMut(&str)>(
         })
         .context(EAcess)?;
 
-    // Some results need to be filtered out
-    let mut filtered_iter = key_mode_iter.filter(|key_mode| {
-        match key_mode {
-            // Skip if grandchild etc
-            Ok(key_mode) if key_mode.key == "/" => false,
-            // Skip if result is path
-            Ok(key_mode) if key_mode.key == path => false,
-            // Special case, skip when dir the root dir
-            Ok(key_mode) if key_mode.mode == 0 => false,
-            _ => true,
-        }
-    });
-
     // Part of the contract is that we always return these dirs
     cb(".");
     cb("..");
 
     // If any loop returns an Err then we return that error immediately using `try_for_each`.
-    filtered_iter.try_for_each(|key_mode| {
+    key_mode_iter.try_for_each(|key_mode| {
         match key_mode {
             Ok(key_mode) => Ok(cb(&key_mode.key)),
             Err(_) => Err(ReadDirError::EBusy), //todo
