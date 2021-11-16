@@ -40,8 +40,7 @@ pub extern "C" fn readdir(
     let path = unsafe { CStr::from_ptr(path_ptr) };
     let path = path
         .to_str()
-        .expect("todo: couldn't convert path to valid utf8 rust str")
-        .trim_start_matches("/");
+        .expect("todo: couldn't convert path to valid utf8 rust str");
 
     let result = readdir_(connection, path, |st| {
         let s = CString::new(st).unwrap();
@@ -56,19 +55,25 @@ pub extern "C" fn readdir(
 }
 
 /// Internal method with no unsafe code.
+///
+/// Never panics
 fn readdir_<F: FnMut(&str)>(
     connection: Connection,
     path: &str,
     mut cb: F,
 ) -> Result<(), ReadDirError> {
+    // remove any leading slashes
     let path = path.trim_start_matches("/");
 
+    // format the glob pattern
     let glob = format!("{}/*", path);
 
+    // Prepare the query
     let mut stmt = connection
         .prepare("select key, mode from meta_data where key glob ?1;")
         .context(EAcess)?;
 
+    // Actually do the query
     let key_mode_iter = stmt
         .query_map(params![glob], |row| {
             Ok(KeyMode {
@@ -78,22 +83,24 @@ fn readdir_<F: FnMut(&str)>(
         })
         .context(EAcess)?;
 
-    // Part of the contract is that we always return these dirs
-    cb(".");
-    cb("..");
-
+    // Some results need to be filtered out
     let mut filtered_iter = key_mode_iter.filter(|key_mode| {
         match key_mode {
             // Skip if grandchild etc
             Ok(key_mode) if key_mode.key == "/" => false,
             // Skip if result is path
             Ok(key_mode) if key_mode.key == path => false,
-            // Special case when dir the root dir
+            // Special case, skip when dir the root dir
             Ok(key_mode) if key_mode.mode == 0 => false,
             _ => true,
         }
     });
 
+    // Part of the contract is that we always return these dirs
+    cb(".");
+    cb("..");
+
+    // If any loop returns an Err then we return that error immediately.
     filtered_iter.try_for_each(|key_mode| {
         match key_mode {
             Ok(key_mode) => Ok(cb(&key_mode.key)),
