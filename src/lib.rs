@@ -1,4 +1,4 @@
-use libc::{c_int, EACCES, EBUSY};
+use libc::{c_int, EACCES, EBUSY, EXIT_SUCCESS};
 use snafu::{ResultExt, Snafu};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
@@ -35,22 +35,27 @@ pub extern "C" fn readdir(
     filler_buff: *mut c_void,
     filler: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void, i32) -> i32,
 ) -> c_int {
+    // Convert the sqlite3 pointer to a Connection.
     let connection = unsafe { Connection::from_handle(handle) }
         .expect("todo: couldn't open Connection from handle");
+
+    // Convert the path_ptr to a rust &str
     let path = unsafe { CStr::from_ptr(path_ptr) };
     let path = path
         .to_str()
         .expect("todo: couldn't convert path to valid utf8 rust str");
 
+    // Run our query
     let result = readdir_(connection, path, |st| {
         let s = CString::new(st).unwrap();
 
         unsafe { filler(filler_buff, s.as_ptr(), null_mut(), 0) };
     });
 
+    // Map the result into libc codes
     match result {
         Err(e) => e.into(),
-        Ok(_) => 0,
+        Ok(_) => EXIT_SUCCESS,
     }
 }
 
@@ -100,7 +105,7 @@ fn readdir_<F: FnMut(&str)>(
     cb(".");
     cb("..");
 
-    // If any loop returns an Err then we return that error immediately.
+    // If any loop returns an Err then we return that error immediately using `try_for_each`.
     filtered_iter.try_for_each(|key_mode| {
         match key_mode {
             Ok(key_mode) => Ok(cb(&key_mode.key)),
