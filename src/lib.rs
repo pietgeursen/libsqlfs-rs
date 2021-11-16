@@ -1,4 +1,5 @@
 use libc::{c_int, EACCES, EBUSY, EXIT_SUCCESS};
+pub use libfuse_sys::fuse::fuse_fill_dir_t;
 use snafu::{ResultExt, Snafu};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
@@ -8,9 +9,8 @@ use rusqlite::ffi::sqlite3;
 use rusqlite::{params, Connection, Error};
 
 #[derive(Debug)]
-struct KeyMode {
+struct Key {
     key: String,
-    mode: i32,
 }
 
 #[repr(i32)]
@@ -19,6 +19,8 @@ pub enum ReadDirError {
     EAcess { source: Error },
     EBusy,
 }
+
+// Implement a conversion from our error type to libc error codes.
 impl From<ReadDirError> for c_int {
     fn from(err: ReadDirError) -> Self {
         match err {
@@ -30,18 +32,17 @@ impl From<ReadDirError> for c_int {
 
 #[no_mangle]
 pub extern "C" fn readdir(
-    handle: *mut sqlite3,
+    handle: *mut c_void,
     path_ptr: *const c_char,
     filler_buff: *mut c_void,
-    filler: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void, i32) -> i32,
+    filler: fuse_fill_dir_t,
 ) -> c_int {
     // Convert the sqlite3 pointer to a Connection.
-    let connection = unsafe { Connection::from_handle(handle) }
+    let connection = unsafe { Connection::from_handle(handle as *mut sqlite3) }
         .expect("todo: couldn't open Connection from handle");
 
     // Convert the path_ptr to a rust &str
-    let path = unsafe { CStr::from_ptr(path_ptr) };
-    let path = path
+    let path = unsafe { CStr::from_ptr(path_ptr) }
         .to_str()
         .expect("todo: couldn't convert path to valid utf8 rust str");
 
@@ -49,19 +50,20 @@ pub extern "C" fn readdir(
     let result = readdir_(connection, path, |st| {
         let s = CString::new(st).unwrap();
 
-        unsafe { filler(filler_buff, s.as_ptr(), null_mut(), 0) };
+        if let Some(filler) = filler {
+            unsafe { filler(filler_buff, s.as_ptr(), null_mut(), 0) };
+        }
     });
 
     // Map the result into libc codes
     match result {
+        // into uses our conversion above
         Err(e) => e.into(),
         Ok(_) => EXIT_SUCCESS,
     }
 }
 
-/// Internal method with no unsafe code.
-///
-/// Never panics
+/// Internal method with no unsafe code that never panics.
 fn readdir_<F: FnMut(&str)>(
     connection: Connection,
     path: &str,
@@ -74,18 +76,15 @@ fn readdir_<F: FnMut(&str)>(
     let glob = format!("{}/*", path);
 
     // Prepare the query
+    // Note that the query includes the filtering that was done by the c code. In my experience
+    // doing it in sqlite will generally be faster.
     let mut stmt = connection
-        .prepare("select key, mode from meta_data where key glob ?1 and mode != 0 and key != '/' and key != ?2;")
+        .prepare("select key from meta_data where key glob ?1 and mode != 0 and key != '/' and key != ?2;")
         .context(EAcess)?;
 
     // Actually do the query
     let mut key_mode_iter = stmt
-        .query_map(params![glob, path], |row| {
-            Ok(KeyMode {
-                key: row.get(0)?,
-                mode: row.get(1)?,
-            })
-        })
+        .query_map(params![glob, path], |row| Ok(Key { key: row.get(0)? }))
         .context(EAcess)?;
 
     // Part of the contract is that we always return these dirs
@@ -93,9 +92,14 @@ fn readdir_<F: FnMut(&str)>(
     cb("..");
 
     // If any loop returns an Err then we return that error immediately using `try_for_each`.
+    // This is slightly different from the c code. If any one result returns busy it will keep
+    // trying the next row. Which seems weird to me?
     key_mode_iter.try_for_each(|key_mode| {
         match key_mode {
             Ok(key_mode) => Ok(cb(&key_mode.key)),
+            // We can't distinguish between SQLITE_BUSY or some other sqlite error because they're
+            // not exposed in this error type. We could probably get at them if we really cared.
+            // This just catches all errors and return EBusy
             Err(_) => Err(ReadDirError::EBusy), //todo
         }
     })

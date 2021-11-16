@@ -7,7 +7,8 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2"
-rusqlite = {version = "0.26.1", features = ["buildtime_bindgen"]}
+libfuse-sys = "0.3"
+rusqlite = {version = "0.26.1"}
 snafu = "0.6"
 
 [lib]
