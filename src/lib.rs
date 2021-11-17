@@ -83,22 +83,22 @@ fn readdir_<F: FnMut(&str)>(
         .context(EAcess)?;
 
     // Actually do the query
-    let key_mode_iter = stmt
+    let mut entries_iter = stmt
         .query_map(params![glob, path], |row| Ok(Key { key: row.get(0)? }))
         .context(EAcess)?
-        .map(|key_mode| match key_mode {
-            Ok(key_mode) => Ok(key_mode.key[path.len() + 1..].to_owned()),
+        .map(|key| match key {
+            // Trim off the path name at the start
+            Ok(key) => Ok(key.key[path.len() + 1..].to_owned()),
             Err(e) => Err(e),
+        })
+        .filter(|val| {
+            // Some results need to be filtered out
+            match val {
+                // Skip if grandchild etc
+                Ok(val) => !(val.is_empty() || val.contains("/")),
+                _ => true,
+            }
         });
-
-    // Some results need to be filtered out
-    let mut filtered_iter = key_mode_iter.filter(|key_mode| {
-        match key_mode {
-            // Skip if grandchild etc
-            Ok(key_mode) => !(key_mode.is_empty() || key_mode.contains("/")),
-            _ => true,
-        }
-    });
 
     // Part of the contract is that we always return these dirs
     cb(".");
@@ -107,9 +107,9 @@ fn readdir_<F: FnMut(&str)>(
     // If any loop returns an Err then we return that error immediately using `try_for_each`.
     // This is slightly different from the c code. If any one result returns busy it will keep
     // trying the next row. Which seems weird to me?
-    filtered_iter.try_for_each(|key_mode| {
-        match key_mode {
-            Ok(key_mode) => Ok(cb(&key_mode)),
+    entries_iter.try_for_each(|entry| {
+        match entry {
+            Ok(entry) => Ok(cb(&entry)),
             // We can't distinguish between SQLITE_BUSY or some other sqlite error because they're
             // not exposed in this error type. We could probably get at them if we really cared.
             // This just catches all errors and return EBusy
