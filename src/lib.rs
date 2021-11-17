@@ -79,13 +79,26 @@ fn readdir_<F: FnMut(&str)>(
     // Note that the query includes the filtering that was done by the c code. In my experience
     // doing it in sqlite will generally be faster.
     let mut stmt = connection
-        .prepare("select key from meta_data where key glob ?1 and mode != 0 and key != '/' and key != ?2;")
+        .prepare_cached("select key from meta_data where key glob ?1 and key != ?2;")
         .context(EAcess)?;
 
     // Actually do the query
-    let mut key_mode_iter = stmt
+    let key_mode_iter = stmt
         .query_map(params![glob, path], |row| Ok(Key { key: row.get(0)? }))
         .context(EAcess)?;
+
+    // Some results need to be filtered out
+    let mut filtered_iter = key_mode_iter.filter(|key_mode| {
+        match key_mode {
+            // Skip if grandchild etc
+            Ok(key_mode) => {
+                let trimmed = &key_mode.key[path.len() + 1..];
+
+                !(trimmed.is_empty() || trimmed.contains("/"))
+            }
+            _ => true,
+        }
+    });
 
     // Part of the contract is that we always return these dirs
     cb(".");
@@ -94,7 +107,7 @@ fn readdir_<F: FnMut(&str)>(
     // If any loop returns an Err then we return that error immediately using `try_for_each`.
     // This is slightly different from the c code. If any one result returns busy it will keep
     // trying the next row. Which seems weird to me?
-    key_mode_iter.try_for_each(|key_mode| {
+    filtered_iter.try_for_each(|key_mode| {
         match key_mode {
             Ok(key_mode) => Ok(cb(&key_mode.key)),
             // We can't distinguish between SQLITE_BUSY or some other sqlite error because they're
