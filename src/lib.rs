@@ -84,13 +84,13 @@ fn readdir_<F: FnMut(&str)>(
 
     // Actually do the query
     let mut entries_iter = stmt
-        .query_map(params![glob, path], |row| Ok(Key { key: row.get(0)? }))
-        .context(EAcess)?
-        .map(|key| match key {
-            // Trim off the path name at the start
-            Ok(key) => Ok(key.key[path.len() + 1..].to_owned()),
-            Err(e) => Err(e),
+        .query_map(params![glob, path], |row| {
+            let row_ref = row.get_ref(0)?.as_str()?;
+
+            let trimmed_result: String = (&row_ref[path.len() + 1..]).into();
+            Ok(trimmed_result)
         })
+        .context(EAcess)?
         .filter(|val| {
             // Some results need to be filtered out
             match val {
