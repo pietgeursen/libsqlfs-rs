@@ -8,11 +8,6 @@ use std::ptr::null_mut;
 use rusqlite::ffi::sqlite3;
 use rusqlite::{params, Connection, Error};
 
-#[derive(Debug)]
-struct Key {
-    key: String,
-}
-
 #[repr(i32)]
 #[derive(Snafu, Debug)]
 pub enum ReadDirError {
