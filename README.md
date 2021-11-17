@@ -22,3 +22,4 @@ In the libsqlfs directory
   - `touch my_sqlite_fuse_dir/my_file.md`
 - List the files (will call our rust code)
   - `./sqlfsls /tmp/fsdata`
+  - or just use `ls my_sqlite_fuse_dir`
