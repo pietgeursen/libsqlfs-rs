@@ -76,7 +76,7 @@ fn readdir_<F: FnMut(&str)>(
     let glob = format!("{}/*", path);
 
     // Prepare the query
-    // Note that the query includes the filtering that was done by the c code. In my experience
+    // Note that the query includes some of the filtering that was done by the c code. In my experience
     // doing it in sqlite will generally be faster.
     let mut stmt = connection
         .prepare_cached("select key from meta_data where key glob ?1 and key != ?2;")
@@ -85,17 +85,17 @@ fn readdir_<F: FnMut(&str)>(
     // Actually do the query
     let key_mode_iter = stmt
         .query_map(params![glob, path], |row| Ok(Key { key: row.get(0)? }))
-        .context(EAcess)?;
+        .context(EAcess)?
+        .map(|key_mode| match key_mode {
+            Ok(key_mode) => Ok(key_mode.key[path.len() + 1..].to_owned()),
+            Err(e) => Err(e),
+        });
 
     // Some results need to be filtered out
     let mut filtered_iter = key_mode_iter.filter(|key_mode| {
         match key_mode {
             // Skip if grandchild etc
-            Ok(key_mode) => {
-                let trimmed = &key_mode.key[path.len() + 1..];
-
-                !(trimmed.is_empty() || trimmed.contains("/"))
-            }
+            Ok(key_mode) => !(key_mode.is_empty() || key_mode.contains("/")),
             _ => true,
         }
     });
@@ -109,7 +109,7 @@ fn readdir_<F: FnMut(&str)>(
     // trying the next row. Which seems weird to me?
     filtered_iter.try_for_each(|key_mode| {
         match key_mode {
-            Ok(key_mode) => Ok(cb(&key_mode.key)),
+            Ok(key_mode) => Ok(cb(&key_mode)),
             // We can't distinguish between SQLITE_BUSY or some other sqlite error because they're
             // not exposed in this error type. We could probably get at them if we really cared.
             // This just catches all errors and return EBusy
