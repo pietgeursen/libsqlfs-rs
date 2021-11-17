@@ -64,8 +64,8 @@ fn readdir_<F: FnMut(&str)>(
     path: &str,
     mut cb: F,
 ) -> Result<(), ReadDirError> {
-    // remove any leading slashes
-    let path = path.trim_start_matches("/");
+    // remove any trailing slashes
+    let path = path.trim_end_matches("/");
 
     // format the glob pattern
     let glob = format!("{}/*", path);
