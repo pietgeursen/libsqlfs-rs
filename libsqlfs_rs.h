@@ -22,7 +22,7 @@
 extern "C" {
 #endif // __cplusplus
 
-int readdir(void *Handle, const char *PathPtr, void *FillerBuff, fuse_fill_dir_t Filler);
+int readdir(sqlite3 *Handle, const char *PathPtr, void *FillerBuff, fuse_fill_dir_t Filler);
 
 #ifdef __cplusplus
 } // extern "C"

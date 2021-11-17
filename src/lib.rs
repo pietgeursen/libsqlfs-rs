@@ -27,13 +27,13 @@ impl From<ReadDirError> for c_int {
 
 #[no_mangle]
 pub extern "C" fn readdir(
-    handle: *mut c_void,
+    handle: *mut sqlite3,
     path_ptr: *const c_char,
     filler_buff: *mut c_void,
     filler: fuse_fill_dir_t,
 ) -> c_int {
     // Convert the sqlite3 pointer to a Connection.
-    let connection = unsafe { Connection::from_handle(handle as *mut sqlite3) }
+    let connection = unsafe { Connection::from_handle(handle) }
         .expect("todo: couldn't open Connection from handle");
 
     // Convert the path_ptr to a rust &str
